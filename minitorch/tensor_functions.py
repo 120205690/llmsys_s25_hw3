@@ -419,7 +419,10 @@ class Attn_Softmax(Function):
     @staticmethod
     def forward(ctx: Context, inp: Tensor, mask: Tensor) -> Tensor:
       #   BEGIN ASSIGN3_1 
-      raise NotImplementedError("Need to implement for Assignment 3")
+      #   raise NotImplementedError("Need to implement for Assignment 3")
+      out = inp.f.attn_softmax_fw(inp, mask)
+      ctx.save_for_backward(out)
+      return out
       #   END ASSIGN3_1
 
     @staticmethod

@@ -30,13 +30,16 @@ def test_launch_attn_softmax():
       batch_size *= beam_size
 
   nhead = kt.nhead
+  batch_size, nhead, from_len, to_len = 1, 1, 100, 100
   print(
       "(batch_size, nhead, from_len, to_len, is_dec_self_attn,"
       f" is_dec_self_attn_infer): ({batch_size}, {nhead}, {from_len}, {to_len},"
       f" {is_dec_self_attn}, {is_dec_self_attn_infer})"
   )
+  
 
   inp = kt.rand((batch_size, nhead, from_len, to_len))
+
   if is_dec_self_attn:
       mask = kt.dec_self_attn_mask(to_len) * -1e8
       mask = mask.unsqueeze(0).unsqueeze(0)  # [1, 1, to_len, to_len]
