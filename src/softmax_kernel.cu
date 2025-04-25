@@ -315,8 +315,8 @@ blockDim.x = WARP_SIZE
 blockDim.y = warps_per_block
 
 @param
-grad: [batch_size, nhead, seq_len, seq_len], output grad.
-output: [batch_size, nhead, seq_len, seq_len], output of softmax forward.
+grad: [batch_size, nhead, from_len, to_len], output grad.
+output: [batch_size, nhead, from_len, to_len], output of softmax forward.
 */
 template <typename T, int ITERATIONS>
 __global__ void ker_attn_softmax_bw(T *grad, const T *inp, int softmax_length) {
@@ -355,28 +355,80 @@ __global__ void ker_attn_softmax_bw(T *grad, const T *inp, int softmax_length) {
 
 // template <typename T>
 extern "C" {
-void launch_attn_softmax_bw(float *out_grad,
-                                const float *soft_inp, int rows,
-                                int softmax_len,
-                                cudaStream_t stream) {
-  
-  const int warps_per_block = 4;
-  dim3 grid_dim((rows + warps_per_block - 1) / warps_per_block);
-  dim3 block_dim(WARP_SIZE, warps_per_block);
-  // BEGIN ASSIGN3_1
-  
-  
-  // Launch kernel
-  // Hint: use ker_attn_softmax_bw<float, ITERATIONS> depending on softmax_len
-  
-  // Copy back to the host
-  
-  
+  void launch_attn_softmax_bw(float *out_grad,
+    const float *soft_inp, int rows,
+    int softmax_len,
+    cudaStream_t stream) {
 
-  // Free memory on device
-  // END ASSIGN3_1
+const int warps_per_block = 4;
+dim3 grid_dim((rows + warps_per_block - 1) / warps_per_block);
+dim3 block_dim(WARP_SIZE, warps_per_block);
+// BEGIN ASSIGN3_1
+//initialize important variables
+int float_size = sizeof(float);
+int out_grad_size = rows*softmax_len*float_size;
+int soft_inp_size = out_grad_size;
+
+//cudamalloc
+float *d_out_grad, *d_soft_inp;
+cudaMalloc((void **)&d_out_grad, out_grad_size);
+cudaMalloc((void **)&d_soft_inp, soft_inp_size);
+
+//cudamemcpy
+cudaMemcpy(d_out_grad, out_grad, out_grad_size, cudaMemcpyHostToDevice);
+cudaMemcpy(d_soft_inp, soft_inp, soft_inp_size, cudaMemcpyHostToDevice);
+
+//launch customized kernels based on softmax len
+// Launch kernel
+// Hint: use ker_attn_softmax_bw<float, ITERATIONS> depending on softmax_len
+if (softmax_len <= 32) {
+ker_attn_softmax_bw<float, 1><<<grid_dim, block_dim, 0, stream>>>(d_out_grad, d_soft_inp, softmax_len);
+}
+else if (softmax_len <= 64) {
+  ker_attn_softmax_bw<float, 2><<<grid_dim, block_dim, 0, stream>>>(d_out_grad, d_soft_inp, softmax_len);
+}
+else if (softmax_len <= 128) {
+  ker_attn_softmax_bw<float, 4><<<grid_dim, block_dim, 0, stream>>>(d_out_grad, d_soft_inp, softmax_len);
+}
+else if (softmax_len <= 256) {
+  ker_attn_softmax_bw<float, 8><<<grid_dim, block_dim, 0, stream>>>(d_out_grad, d_soft_inp, softmax_len);
+}
+else if (softmax_len <= 384) {
+    ker_attn_softmax_bw<float, 12><<<grid_dim, block_dim, 0, stream>>>(d_out_grad, d_soft_inp, softmax_len);
+}
+else if (softmax_len <= 512) {
+  ker_attn_softmax_bw<float, 16><<<grid_dim, block_dim, 0, stream>>>(d_out_grad, d_soft_inp, softmax_len);
+}
+else if (softmax_len <= 768) {
+    ker_attn_softmax_bw<float, 24><<<grid_dim, block_dim, 0, stream>>>(d_out_grad, d_soft_inp, softmax_len);
+}
+else if (softmax_len <= 1024) {
+  ker_attn_softmax_bw<float, 32><<<grid_dim, block_dim, 0, stream>>>(d_out_grad, d_soft_inp, softmax_len);
+}
+else if (softmax_len <= 2048) {
+  ker_attn_softmax_bw<float, 64><<<grid_dim, block_dim, 0, stream>>>(d_out_grad, d_soft_inp, softmax_len);
+}
+else {
+throw std::runtime_error("Sequence length greater than 512 is currently not supported");
+}
+
+// Copy back to the host
+cudaMemcpy(out_grad, d_out_grad, out_grad_size, cudaMemcpyDeviceToHost);
+cudaDeviceSynchronize();
+
+//Errorchecking
+cudaError_t err = cudaGetLastError();
+if(err!=cudaSuccess){
+  fprintf(stderr, "launch_attn_softmax Error: %s\n", cudaGetErrorString(err));
+exit(EXIT_FAILURE);
+}
+// Free memory on device
+cudaFree(d_out_grad);
+cudaFree(d_soft_inp);
+// END ASSIGN3_1
 
 }}
+
 
 }  
 } 

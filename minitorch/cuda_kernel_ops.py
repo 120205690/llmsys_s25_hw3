@@ -399,14 +399,38 @@ class CudaKernelOps(TensorOps):
         to_len,
         is_dec_self_attn,
         stream
-      ) 
+      )
 
       return inp
 
     @staticmethod
     def attn_softmax_bw(out_grad: Tensor, soft_inp: Tensor):
       #   BEGIN ASSIGN3_1
-      raise("Not implemented")
+    #   breakpoint()
+      batch_size, nhead, from_len, to_len = out_grad.shape
+      batch_size, nhead, from_len2, to_len2 = soft_inp.shape
+      assert(from_len == from_len2)
+      rows = batch_size * nhead * from_len
+      stream = torch.cuda.current_stream().cuda_stream
+    
+      lib_softmax.launch_attn_softmax_bw.argtypes = [
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_void_p
+      ]
+      lib_softmax.launch_attn_softmax_bw.restype = None
+
+      lib_softmax.launch_attn_softmax_bw(
+        out_grad._tensor._storage,
+        soft_inp._tensor._storage,
+        rows,
+        to_len,
+        stream
+      ) 
+
+      return out_grad
       #   END ASSIGN3_1
 
     @staticmethod
