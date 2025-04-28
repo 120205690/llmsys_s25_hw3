@@ -21,27 +21,31 @@ lib = ctypes.CDLL("minitorch/cuda_kernels/layernorm_kernel.so")
 
 @kt.case(atol=1e-2, rtol=1e-3, ntest=5)
 def test_launch_layernorm():
-    batch_size, seq_len = kt.bs_sl()
-    bsz_seq = batch_size * seq_len
-    hidden_dim = kt.hidden_dim
+    # batch_size, seq_len = kt.bs_sl()
+    # bsz_seq = batch_size * seq_len
+    # hidden_dim = kt.hidden_dim
+    bsz_seq, hidden_dim = 1, 4
+
     print(
         "(batch_token_num, hidden_dim): "
         f"({bsz_seq}, {hidden_dim})"
     )
-    
     custom_res = kt.rand((bsz_seq, hidden_dim))
     inp = kt.rand((bsz_seq, hidden_dim))
     gamma = kt.rand((hidden_dim))
     beta = kt.rand((hidden_dim))
     var = kt.rand((bsz_seq))
     means = kt.rand((bsz_seq))
-    
+    # inp = kt.move(torch.tensor((1, 1, 0, 0)).unsqueeze(0))
+    # gamma, beta = kt.ones((hidden_dim)), kt.zeros((hidden_dim))
+    # breakpoint()
     def custom():
       inp_mt = minitorch.tensor(inp.clone().tolist(), backend=backend, requires_grad=True)
       gamma_mt = minitorch.tensor(gamma.clone().tolist(), backend=backend, requires_grad=True)
       beta_mt = minitorch.tensor(beta.clone().tolist(), backend=backend, requires_grad=True)
 
       start_time = time.time()
+      # breakpoint()
       out_mt = inp_mt.layernorm(gamma_mt, beta_mt)
       end_time = time.time()
       out = torch.tensor(out_mt._tensor._storage).cuda()
@@ -53,7 +57,7 @@ def test_launch_layernorm():
       beta_mt = minitorch.tensor(beta.clone().tolist(), backend=backend, requires_grad=True)
 
       start_time = time.time()
-
+      # breakpoint()
       x = inp_mt.contiguous()
       batch, dim = x.shape
 

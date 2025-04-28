@@ -141,8 +141,11 @@ class PowerScalar(Function):
             output : Tensor
                 Tensor containing the result of raising every element of a to scalar.
         """
-        # COPY FROM ASSIGN2_1
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        out = a.f.pow_scalar_zip(a, scalar)
+        ctx.save_for_backward(a, scalar)
+        return out
+        ### END YOUR SOLUTION
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, float]:
@@ -166,8 +169,9 @@ class PowerScalar(Function):
         a, scalar = ctx.saved_values
         grad_a    = None
         
-        # COPY FROM ASSIGN2_1
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        grad_a = grad_output * (scalar * (a ** (scalar - 1)))
+        ### END YOUR SOLUTION
 
         return (grad_a, 0.0)
 
@@ -190,8 +194,11 @@ class Tanh(Function):
             output : Tensor
                 Tensor containing the element-wise tanh of a.
         """
-        # COPY FROM ASSIGN2_1
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        out = a.f.tanh_map(a)
+        ctx.save_for_backward(out)
+        return out
+        ### END YOUR SOLUTION
     
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tensor:
@@ -209,8 +216,11 @@ class Tanh(Function):
             output : Tensor
                 gradient_for_a must be the correct element-wise gradient for tanh.
         """
-        # COPY FROM ASSIGN2_1
-        raise NotImplementedError
+        ### BEGIN YOUR SOLUTION
+        out = ctx.saved_values[0]
+        return grad_output * (-(out ** 2) + 1)
+        ### END YOUR SOLUTION
+
 
 
 class Sigmoid(Function):
@@ -429,7 +439,7 @@ class Attn_Softmax(Function):
     def backward(ctx: Context, out_grad: Tensor) -> Tensor:
       #   BEGIN ASSIGN3_1 
       #   raise NotImplementedError("Need to implement for Assignment 3")
-    #   breakpoint()
+
       soft_inp, mask = ctx.saved_values
       mask_grad = zeros(mask.shape)
       softmax_grad = out_grad.f.attn_softmax_bw(out_grad, soft_inp)
@@ -443,7 +453,10 @@ class LayerNorm(Function):
     @staticmethod
     def forward(ctx: Context, inp: Tensor, gamma: Tensor, beta: Tensor) -> Tensor:
       #   BEGIN ASSIGN3_2 
-      raise NotImplementedError("Need to implement for Assignment 3")
+      #   raise NotImplementedError("Need to implement for Assignment 3")
+      out = inp.f.layernorm_fw(inp, gamma, beta)
+      ctx.save_for_backward(inp, gamma, beta)
+      return out
       #   END ASSIGN3_2
 
     @staticmethod

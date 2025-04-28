@@ -25,7 +25,7 @@ import torch
 # Load the shared library
 lib = ctypes.CDLL("minitorch/cuda_kernels/combine.so")
 lib_softmax = ctypes.CDLL("minitorch/cuda_kernels/softmax_kernel.so")
-# lib_layernorm = ctypes.CDLL("minitorch/cuda_kernels/layernorm_kernel.so")
+lib_layernorm = ctypes.CDLL("minitorch/cuda_kernels/layernorm_kernel.so")
 datatype = np.float32
 
 # function map
@@ -406,7 +406,6 @@ class CudaKernelOps(TensorOps):
     @staticmethod
     def attn_softmax_bw(out_grad: Tensor, soft_inp: Tensor):
       #   BEGIN ASSIGN3_1
-    #   breakpoint()
       batch_size, nhead, from_len, to_len = out_grad.shape
       batch_size, nhead, from_len2, to_len2 = soft_inp.shape
       assert(from_len == from_len2)
@@ -432,11 +431,46 @@ class CudaKernelOps(TensorOps):
 
       return out_grad
       #   END ASSIGN3_1
-
+    
+    #Note: gamma is the scale, beta is the bias
     @staticmethod
     def layernorm_fw(inp: Tensor, gamma: Tensor, beta: Tensor):
       #   BEGIN ASSIGN3_2
-      raise("Not implemented")
+      #batch_size here has been abstracted to be equal to batch_size * seq_len since that's what matters implementationally
+
+      batch_size, hidden_size = inp.shape
+    #   breakpoint()
+      ln_res = inp.zeros(inp.shape)
+      var = inp.zeros((batch_size,))
+      means = inp.zeros((batch_size,))
+      stream = torch.cuda.current_stream().cuda_stream
+      
+      lib_layernorm.launch_layernorm.argtypes = [
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_void_p
+      ]
+      lib_layernorm.launch_layernorm.restype = None
+    
+      lib_layernorm.launch_layernorm(
+        ln_res._tensor._storage,
+        var._tensor._storage,
+        means._tensor._storage,
+        inp._tensor._storage,
+        gamma._tensor._storage,
+        beta._tensor._storage,
+        batch_size,
+        hidden_size,
+        stream
+      )
+
+      return ln_res
       #   END ASSIGN3_2
       
     @staticmethod

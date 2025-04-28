@@ -157,7 +157,7 @@ __global__ void ker_attn_softmax(T *inp, const T *attn_mask, int from_len,
     /* step 1. compute max */
     // thread local max
     // BEGIN ASSIGN3_1
-    __syncthreads(); //temp
+    // __syncthreads(); //temp
     //define array to hold masked values and max values. this allows for mixed precision operations
     float val[token_per_reduce][ele_per_thread];
     float l_max[token_per_reduce];
@@ -188,7 +188,7 @@ __global__ void ker_attn_softmax(T *inp, const T *attn_mask, int from_len,
     }
     // END ASSIGN3_1
     // block reduce max
-    __syncthreads(); //temp
+    // __syncthreads(); //temp
     blockReduce<ReduceType::kMax, token_per_reduce>(l_max);
     // write shared
     __shared__ float s_max[token_per_reduce];
@@ -210,7 +210,7 @@ __global__ void ker_attn_softmax(T *inp, const T *attn_mask, int from_len,
         l_sum[i] += val[i][j];
       }
     }
-    __syncthreads(); //temp
+    // __syncthreads(); //temp
     // END ASSIGN3_1
     // block reduce sum
     blockReduce<ReduceType::kSum, token_per_reduce>(l_sum);
