@@ -470,12 +470,64 @@ class CudaKernelOps(TensorOps):
         stream
       )
 
-      return ln_res
+      return ln_res, means, var
       #   END ASSIGN3_2
       
     @staticmethod
     def layernorm_bw(out_grad: Tensor, inp: Tensor, gamma: Tensor, beta: Tensor, var: Tensor, mean: Tensor):
       #   BEGIN ASSIGN3_2
-      raise("Not implemented")
+      
+      batch_size, hidden_size = out_grad.shape
+      
+      assert(out_grad.shape == inp.shape)
+      assert(gamma.shape[0]==hidden_size)
+      assert(beta.shape[0]==hidden_size)
+      assert(gamma.shape[0]==hidden_size)
+    #   assert(var.shape[0]==batch_size)
+    #   assert(mean.shape[0]==batch_size)
+
+      curr_stream = torch.cuda.current_stream().cuda_stream
+      new_stream2 = torch.cuda.Stream().cuda_stream
+
+      #initalizing empty arrays where cuda can write out the grad. 
+      gamma_grad = inp.zeros(gamma.shape)
+      beta_grad = inp.zeros(gamma.shape)
+      inp_grad = inp.zeros(out_grad.shape)
+    #   out_grad = inp.zeros(out_grad.shape)
+    
+      lib_layernorm.launch_layernorm_bw.argtypes = [
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_void_p
+      ]
+      lib_layernorm.launch_layernorm_bw.restype = None
+
+      lib_layernorm.launch_layernorm_bw(
+        gamma_grad._tensor._storage,
+        beta_grad._tensor._storage,
+        inp_grad._tensor._storage,
+        out_grad._tensor._storage,
+        inp._tensor._storage,
+        gamma._tensor._storage,
+        beta._tensor._storage,
+        var._tensor._storage,
+        mean._tensor._storage,
+        batch_size,
+        hidden_size,
+        curr_stream,
+        new_stream2
+      ) 
+
+      return inp_grad, gamma_grad, beta_grad
       #   END ASSIGN3_2
       

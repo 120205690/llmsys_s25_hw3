@@ -36,16 +36,12 @@ def test_launch_layernorm():
     beta = kt.rand((hidden_dim))
     var = kt.rand((bsz_seq))
     means = kt.rand((bsz_seq))
-    # inp = kt.move(torch.tensor((1, 1, 0, 0)).unsqueeze(0))
-    # gamma, beta = kt.ones((hidden_dim)), kt.zeros((hidden_dim))
-    # breakpoint()
     def custom():
       inp_mt = minitorch.tensor(inp.clone().tolist(), backend=backend, requires_grad=True)
       gamma_mt = minitorch.tensor(gamma.clone().tolist(), backend=backend, requires_grad=True)
       beta_mt = minitorch.tensor(beta.clone().tolist(), backend=backend, requires_grad=True)
 
       start_time = time.time()
-      # breakpoint()
       out_mt = inp_mt.layernorm(gamma_mt, beta_mt)
       end_time = time.time()
       out = torch.tensor(out_mt._tensor._storage).cuda()
@@ -57,7 +53,6 @@ def test_launch_layernorm():
       beta_mt = minitorch.tensor(beta.clone().tolist(), backend=backend, requires_grad=True)
 
       start_time = time.time()
-      # breakpoint()
       x = inp_mt.contiguous()
       batch, dim = x.shape
 

@@ -22,9 +22,10 @@ It will not only output the layer norm result,
   the means argument is nullptr
 
 @thread
+hidden_size here equals atleast one-fourth of the actual hidden_size since 4 data elements are loaded at once
 gridDim.x = batch_size * seq_len
-blockDim.x = hidden_size
-
+blockDim.x = hidden_size/(some constant)
+loops (some constant) number of times to cover the entire hidden_size vector
 @param
 ln_res: [batch_size * seq_len, hidden_size], ln result.
 vars: [batch_size * seq_len], variance per token
@@ -214,16 +215,87 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
 
   cg::thread_block b = cg::this_thread_block();
   cg::thread_block_tile<TILE_DIM> g = cg::tiled_partition<TILE_DIM>(b);
-
+  float beta_sum = 0.0f;
+  float gamma_sum = 0.0f;
+  
+  int global_col = blockDim.x * blockIdx.x + threadIdx.x;
+  
   // Step 1
+  //betagrad is simply equal to the reduce_sum of the y_grad or out_grad
+  /*The row threads in a block have to span the entire set of rows or batches in the input matrix
+   (=rows here). Therefore each row thread must cover rows/blockDim.y rows which it does by iterating
+    over them. Simultaneously, the warp is parallel to the rows and allows coalesced memory access by 
+    reading successive memory locations of the input array at the same time.
+  Calculate the colsum for each row and reduce them for all rows in a block.
+  Also the shared memory array stores the final results for the entire block since it is blockdim in size */
+  
+  /* things to keep in mind: boundary checks, casting to float for calculation since T type may not match
+   shared memory, division precision by instead multiplying by the reciprocal and also a smoothening 
+   factor of epsilon.
+  Also, the threads which run outside the boundaries may also have to initialize their shared memory locs
+   to zero and this has to be done synchronously*/
 
+
+  if(global_col<width){
+    for(int rowidx = threadIdx.y; rowidx<rows; rowidx+=blockDim.y){
+      int input_ptr = rowidx*width + global_col;
+      //boundary check
+      
+        //load input and mean and variance and any other variable that needs to be loaded using this
+        beta_sum += static_cast<float>(out_grad[input_ptr]);
+        //now x_hat must be calculated for gamma_sum
+        //either var and means are given or beta and gamma. modify formula for calulating x_hat accordingly
+        float inp_val = static_cast<float>(inp[input_ptr]);
+        float x_hat = 0.0f;
+        if(vars && means){
+          x_hat = (inp_val - static_cast<float>(means[rowidx])) * rsqrt(static_cast<float>(vars[rowidx]) + LN_EPSILON);
+        }
+        else if(gamma && betta){
+          //inp now represents the output since means is null
+          x_hat = (inp_val - static_cast<float>(betta[global_col]))/static_cast<float>(gamma[global_col]);
+        }
+        else{
+          //throw error
+          assert(false && "Error: Entered forbidden condition case");
+        }
+        gamma_sum += static_cast<float>(out_grad[input_ptr]) * x_hat;
+    }
+  }
   // Step 2
-  
-  // Step 3
-  
-  // Step 4
+  /*store beta_sum and gamma_sum in the shared arrays. Here's a cool trick. Reductions happen best across
+   a warp which is currently row-wise. But the reduction is to be carried across the columns of the array.
+   Therefore, give each horizontal warp the data for a particular vertical col. Carry out the reduction 
+   such that now the first elem of each warp has all the data i.e. threadX=0. Copy this over into the 
+   global array. But the threads now holding the data have been switched therefore, their global_col too is
+   different (since col 1 holds all the data after the reduction). Therefore calc the new global_col and 
+   store the data back into global_memory. 
+   */
+  betta_buffer[threadIdx.y][threadIdx.x] = beta_sum;
+  gamma_buffer[threadIdx.y][threadIdx.x] = gamma_sum;
+  b.sync();
 
-  assert(false && "Not Implemented");
+  beta_sum = betta_buffer[threadIdx.x][threadIdx.y];
+  gamma_sum = gamma_buffer[threadIdx.x][threadIdx.y];
+  b.sync();
+
+  // Step 3
+  /* Perform a reduction_sum in each col to end up with a hidden_size array. This reduction function accesses values and variables in other threads (offset by the loop variable offset) and adds them together till only one thread contains the entire reduced value. This is something performed explicitly by just one thread hence thread control flow has been added. */
+  // gamma_sum = 0.0f;
+  // beta_sum = 0.0f;
+  
+  for(int offset = TILE_DIM/2; offset>0; offset/=2){
+    beta_sum += g.shfl_down(beta_sum, offset);
+    gamma_sum += g.shfl_down(gamma_sum, offset);
+  } 
+  b.sync();
+  global_col = blockDim.x * blockIdx.x + threadIdx.y;
+
+  if(threadIdx.x == 0 && global_col < width){
+  // Step 4
+  gamma_grad[global_col] = static_cast<T>(gamma_sum);
+  betta_grad[global_col] = static_cast<T>(beta_sum);
+  }
+  // b.sync();
   /// END ASSIGN3_2
 }
 
@@ -239,18 +311,16 @@ dxhat = dout * gamma
 
 @thread
 gridDim.x = batch_size * seq_len
-blockDim.x = hidden_size
+blockDim.x = hidden_size/(some constant)
 
 @param
 inp_grad: [batch_size * seq_len, hidden_size], gradient of betta ln output
 out_grad: [batch_size * seq_len, hidden_size], gradient of betta ln output
-residual_grad: [batch_size * seq_len, hidden_size], gradient of residual input,
-  usually appear in pre-layer-norm for transformer layer, maybe nullptr
 inp_or_out: [batch_size * seq_len, hidden_size], ln output if means is nullptr
   ln input if means is not nullptr
 gamma: [hidden_size], gamma of ln,
   used to compute xhat and dxhat
-betta: [hidden_size], betta of ln,
+beta: [hidden_size], betta of ln,
   used to compute xhat, maybe nullptr
 vars: [batch_size * seq_len], variance of ln forward,
   used to compute xhat and dinp
@@ -259,26 +329,117 @@ means: [batch_size * seq_len], mean of ln forward,
 */
 template <typename T>
 __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
-                               const T *gamma, const T *betta, const T *vars,
-                               const T *means, int hidden_dim) {
+                               const T *gamma, const T *beta, const T *vars,
+                               const T *means, int hidden_size) {
   
   /// BEGIN ASSIGN3_2
   /// TODO
   // Hints:
-  // 1. Compute dxhat=dy*w with reinterpret_cast by casting to float4 for speedup
+  // 1. Compute dxhat=dy*gamma with reinterpret_cast by casting to float4 for speedup
   // 2. Compute xhat with reinterpret_cast by casting to float4 for speedup
   // 3. Compute reduce sum for dxhat and dxhat*xhat with blockReduce
   // 4. Compute final gradient
-  
+  /* The gradient equation gives the gradient element i for batch b of the input matrix.
+  j represents a sum over the entire hidden dim. Therefore, dot products between a batch of y and gamma
+  and x_hat are taken and stored. This is essentially a reduction which is to be subtracted from the
+  product of the i_th element of the gradient y (of a particular batch b) and gamma vector.
+  Each batch of y of size hidden_size is also stored in consecutive memory locations so warping makes 
+  sense. 
+  As an aside, always store matrices in warp sized dimensions to make it explicitly easier to load as a 
+  warp to perform warp reduce over all hidden_size elements. 
+  If each row corresponds to a hidden_size vector, with block of dim 32 x 32,
+  then each row can reduce an entire vector. But now blockreduce would have to performed for every row
+  making the entire gpu wait. In beta_grad, reduction was performed over the batch_dim where an iteration
+  was performed over an entire col. Similarly, if each col is now a hidden_dim, the exact same
+  paradigm can be now applied wherein 32 rows iterate to cover the entire hidden_dim and only one reduction
+  is carried out. The no. of cols equals the batch_size. Each block now operates independently.
+
+  Easier still: just have each block do the hidden_size ops for each batch. Launch batch_size no. of blocks.
+  Same as earlier, since same number of threads, but using 
+  */
   // Step 1
- 
-  // Step 2
-   
-  // Step 3
- 
-  // Step 4
+  //Note hidden_size is now the actual hidden_size/4
+  int tx = threadIdx.x; 
+  int blockdim = blockDim.x;
   
-  assert(false && "Not Implemented");
+  const float4 *inp_f4 = reinterpret_cast<const float4 *>(inp) + blockIdx.x * hidden_size;  
+  const float4 *out_grad_f4 = reinterpret_cast<const float4 *>(out_grad) + blockIdx.x * hidden_size;  
+  float4 *inp_grad_f4 = reinterpret_cast<float4 *>(inp_grad) + blockIdx.x * hidden_size;  
+
+  const float4 *gamma_f4 = reinterpret_cast<const float4 *>(gamma);  
+  const float4 *beta_f4 = reinterpret_cast<const float4 *>(beta);
+  float vars_val = rsqrt(*(static_cast<const float *>(vars + blockIdx.x)) + LN_EPSILON);
+  float mean_val = *(static_cast<const float *>(means + blockIdx.x));
+
+  float y_gamma = 0.0f; float y_gamma_xhat = 0.0f;
+  
+  //Loop over row and calc the 2 dot product terms which need to be reduced
+  for(int i = tx; i < hidden_size; i += blockdim){
+    float4 inp_val  = inp_f4[i];
+    float4 out_grad_val  = out_grad_f4[i];
+    float4 gamma_val = gamma_f4[i];
+    float4 beta_val = beta_f4[i];
+
+    y_gamma += out_grad_val.x * gamma_val.x + out_grad_val.y * gamma_val.y + out_grad_val.z * gamma_val.z + out_grad_val.w * gamma_val.w;
+    if(means && vars){
+      y_gamma_xhat += out_grad_val.x * gamma_val.x * (inp_val.x - mean_val)*vars_val + out_grad_val.y * gamma_val.y * (inp_val.y - mean_val)*vars_val + out_grad_val.z * gamma_val.z * (inp_val.z - mean_val)*vars_val + out_grad_val.w * gamma_val.w * (inp_val.w - mean_val)*vars_val;
+    }
+    else{
+      y_gamma_xhat += out_grad_val.x * gamma_val.x * (inp_val.x - beta_val.x)/gamma_val.x + out_grad_val.y * gamma_val.y * (inp_val.y - beta_val.y)/gamma_val.y + out_grad_val.z * gamma_val.z * (inp_val.z - beta_val.z)/gamma_val.z + out_grad_val.w * gamma_val.w * (inp_val.w - beta_val.w)/gamma_val.w;
+    }
+  }
+
+  // Step 2
+  const int reductions_per_thread = 1;
+  blockReduce<ReduceType::kSum, reductions_per_thread>(&y_gamma);
+  blockReduce<ReduceType::kSum, reductions_per_thread>(&y_gamma_xhat);
+  
+  // Step 3
+  float4 x_hat_val;
+
+  for(int i = tx; i < hidden_size; i += blockdim){
+    float4 inp_val  = inp_f4[i];
+    float4 out_grad_val  = out_grad_f4[i];
+    float4 gamma_val = gamma_f4[i];
+    float4 beta_val = beta_f4[i];
+
+    if(vars && means){
+      x_hat_val.x = (inp_val.x - mean_val) * vars_val;
+      x_hat_val.y = (inp_val.y - mean_val) * vars_val;
+      x_hat_val.z = (inp_val.z - mean_val) * vars_val;
+      x_hat_val.w = (inp_val.w - mean_val) * vars_val;
+    }
+    else if(gamma && beta){
+      //inp now represents the output since means is null
+      x_hat_val.x = (inp_val.x - beta_val.x)/gamma_val.x;
+      x_hat_val.y = (inp_val.y - beta_val.y)/gamma_val.y;
+      x_hat_val.z = (inp_val.z - beta_val.z)/gamma_val.z;
+      x_hat_val.w = (inp_val.w - beta_val.w)/gamma_val.w;
+    }
+    float4 term1, term3;
+    term1.x = out_grad_val.x * gamma_val.x * vars_val;
+    term1.y = out_grad_val.y * gamma_val.y * vars_val;
+    term1.z = out_grad_val.z * gamma_val.z * vars_val;
+    term1.w = out_grad_val.w * gamma_val.w * vars_val;
+
+
+    float term2 = -vars_val/(hidden_size*4);
+
+    term3.x = y_gamma + x_hat_val.x * y_gamma_xhat;
+    term3.y = y_gamma + x_hat_val.y * y_gamma_xhat;
+    term3.z = y_gamma + x_hat_val.z * y_gamma_xhat;
+    term3.w = y_gamma + x_hat_val.w * y_gamma_xhat;
+
+
+    float4 x_grad_val;
+    x_grad_val.x = term1.x + term2 * term3.x;
+    x_grad_val.y = term1.y + term2 * term3.y;
+    x_grad_val.z = term1.z + term2 * term3.z;
+    x_grad_val.w = term1.w + term2 * term3.w;
+
+    // Step 4 
+    inp_grad_f4[i] = x_grad_val;
+  }
   /// END ASSIGN3_2
 }
 extern "C" {
