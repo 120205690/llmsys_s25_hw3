@@ -30,7 +30,6 @@ def test_launch_attn_softmax():
       batch_size *= beam_size
 
   nhead = kt.nhead
-  batch_size, nhead, from_len, to_len = 1, 1, 100, 100
   print(
       "(batch_size, nhead, from_len, to_len, is_dec_self_attn,"
       f" is_dec_self_attn_infer): ({batch_size}, {nhead}, {from_len}, {to_len},"
@@ -50,7 +49,6 @@ def test_launch_attn_softmax():
   def custom():
     inp_mt = minitorch.tensor(inp.clone().tolist(), backend=backend, requires_grad=True)
     mask_mt = minitorch.tensor(mask.clone().tolist(), backend=backend, requires_grad=True)
-
     start_time = time.time()
     cust_out = inp_mt.attn_softmax(mask_mt)
     end_time = time.time()

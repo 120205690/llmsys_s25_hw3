@@ -25,7 +25,7 @@ import torch
 # Load the shared library
 lib = ctypes.CDLL("minitorch/cuda_kernels/combine.so")
 lib_softmax = ctypes.CDLL("minitorch/cuda_kernels/softmax_kernel.so")
-lib_layernorm = ctypes.CDLL("minitorch/cuda_kernels/layernorm_kernel.so")
+# lib_layernorm = ctypes.CDLL("minitorch/cuda_kernels/layernorm_kernel.so")
 datatype = np.float32
 
 # function map
@@ -374,10 +374,14 @@ class CudaKernelOps(TensorOps):
 
     @staticmethod
     def attn_softmax_fw(inp: Tensor, mask: Tensor):
+      #batch_size*seq_len has been reshaped into just batch_size
+    #   breakpoint()
       batch_size, nhead, from_len, to_len = inp.shape
-      is_dec_self_attn = False
+      mask_future = False
       stream = torch.cuda.current_stream().cuda_stream
 
+
+    #   mask = None
       lib_softmax.launch_attn_softmax.argtypes = [
         np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
         np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
@@ -397,10 +401,10 @@ class CudaKernelOps(TensorOps):
         nhead,
         from_len,
         to_len,
-        is_dec_self_attn,
+        mask_future,
         stream
       )
-
+      
       return inp
 
     @staticmethod
@@ -439,7 +443,6 @@ class CudaKernelOps(TensorOps):
       #batch_size here has been abstracted to be equal to batch_size * seq_len since that's what matters implementationally
 
       batch_size, hidden_size = inp.shape
-    #   breakpoint()
       ln_res = inp.zeros(inp.shape)
       var = inp.zeros((batch_size,))
       means = inp.zeros((batch_size,))
@@ -483,8 +486,6 @@ class CudaKernelOps(TensorOps):
       assert(gamma.shape[0]==hidden_size)
       assert(beta.shape[0]==hidden_size)
       assert(gamma.shape[0]==hidden_size)
-    #   assert(var.shape[0]==batch_size)
-    #   assert(mean.shape[0]==batch_size)
 
       curr_stream = torch.cuda.current_stream().cuda_stream
       new_stream2 = torch.cuda.Stream().cuda_stream
@@ -493,7 +494,6 @@ class CudaKernelOps(TensorOps):
       gamma_grad = inp.zeros(gamma.shape)
       beta_grad = inp.zeros(gamma.shape)
       inp_grad = inp.zeros(out_grad.shape)
-    #   out_grad = inp.zeros(out_grad.shape)
     
       lib_layernorm.launch_layernorm_bw.argtypes = [
         np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),

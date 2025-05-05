@@ -3,13 +3,11 @@ Implementation of the autodifferentiation Functions for Tensor.
 """
 
 from __future__ import annotations
-
 import random
 from typing import TYPE_CHECKING
 
 import numpy as np
 import copy
-
 import minitorch
 
 from . import operators
@@ -428,8 +426,8 @@ class MatMul(Function):
 class Attn_Softmax(Function):
     @staticmethod
     def forward(ctx: Context, inp: Tensor, mask: Tensor) -> Tensor:
-      #   BEGIN ASSIGN3_1 
-      #   raise NotImplementedError("Need to implement for Assignment 3")
+      #   BEGIN ASSIGN3_1
+    #   mask_future.requires_grad(False)
       out = inp.f.attn_softmax_fw(inp, mask)
       ctx.save_for_backward(out, mask)
       return out
@@ -438,7 +436,6 @@ class Attn_Softmax(Function):
     @staticmethod
     def backward(ctx: Context, out_grad: Tensor) -> Tensor:
       #   BEGIN ASSIGN3_1 
-      #   raise NotImplementedError("Need to implement for Assignment 3")
 
       soft_inp, mask = ctx.saved_values
       mask_grad = zeros(mask.shape)
@@ -453,7 +450,6 @@ class LayerNorm(Function):
     @staticmethod
     def forward(ctx: Context, inp: Tensor, gamma: Tensor, beta: Tensor) -> Tensor:
       #   BEGIN ASSIGN3_2 
-      #   raise NotImplementedError("Need to implement for Assignment 3")
       out, mean, var = inp.f.layernorm_fw(inp, gamma, beta)
       ctx.save_for_backward(inp, gamma, beta, mean, var)
       return out
@@ -463,10 +459,7 @@ class LayerNorm(Function):
     def backward(ctx: Context, out_grad: Tensor) -> Tensor:
       #   BEGIN ASSIGN3_2
       inp, gamma, beta, mean, var = ctx.saved_values
-    #   var = None
-    #   mean = None
       inp_grad, gamma_grad, beta_grad = out_grad.f.layernorm_bw(out_grad, inp, gamma, beta, var, mean)
-    #   breakpoint()
       return inp_grad, gamma_grad, beta_grad
       #   END ASSIGN3_2
 

@@ -29,6 +29,7 @@ def test_launch_attn_softmax_bw():
     out_grad_mt = minitorch.tensor(out_grad.clone().tolist(), backend=backend, requires_grad=True)
     inp_mt = minitorch.tensor(inp.clone().tolist(), backend=backend, requires_grad=True)
     mask_mt = minitorch.tensor(np.zeros((batch_size, 1, 1, to_len)).tolist(), backend=backend, requires_grad=True)
+    # breakpoint()
     soft_inp_mt = inp_mt.attn_softmax(mask_mt)
 
     start_time = time.time()
